@@ -1,4 +1,4 @@
-"""文化禁忌合规审核服务 — 真实图像内容分析版"""
+"""文化禁忌合规审核服务 — 真实图像内容分析版（AI优先，规则引擎fallback）"""
 
 import json
 import time
@@ -6,66 +6,116 @@ import hashlib
 import os
 from PIL import Image
 from database import get_db
+from ai_service import get_ai_service
 
 # ---- 高危色彩模式映射 ----
 # 基于色彩分布的组合来推断可能的敏感符号
 SENSITIVE_COLOR_PATTERNS = {
     "nazi_flag": {
         "colors": ["大红", "雪白", "玄黑"],
-        "red_ratio": (0.3, 0.7), "white_ratio": (0.1, 0.3), "black_ratio": (0.05, 0.25),
+        "red_ratio": (0.3, 0.7),
+        "white_ratio": (0.1, 0.3),
+        "black_ratio": (0.05, 0.25),
         "risk": "高风险",
         "hint": "红底+白色圆形+黑色图案组合疑似纳粹相关符号",
-        "countries": ["德国", "欧洲", "全球"]
+        "countries": ["德国", "欧洲", "全球"],
     },
     "rising_sun": {
         "colors": ["雪白", "大红"],
-        "red_ratio": (0.1, 0.4), "white_ratio": (0.4, 0.8),
+        "red_ratio": (0.1, 0.4),
+        "white_ratio": (0.4, 0.8),
         "risk": "高风险",
         "hint": "白底+放射状红色条纹疑似旭日旗图案",
-        "countries": ["日本", "韩国", "东亚", "全球"]
+        "countries": ["日本", "韩国", "东亚", "全球"],
     },
     "islamic_taboo": {
         "colors": ["金色", "大红", "墨绿"],
         "has_cross_pattern": True,
         "risk": "高风险",
         "hint": "疑似包含十字架等宗教符号",
-        "countries": ["沙特阿拉伯", "阿联酋", "中东", "全球"]
+        "countries": ["沙特阿拉伯", "阿联酋", "中东", "全球"],
     },
     "native_appropriation": {
         "colors": ["茶色", "大红", "金色"],
         "earthy_ratio": (0.3, 0.7),
         "risk": "高风险",
         "hint": "羽饰/图腾柱风格配色疑似文化挪用风险",
-        "countries": ["美国", "北美", "全球"]
+        "countries": ["美国", "北美", "全球"],
     },
 }
 
 
 class ComplianceChecker:
-    """文化禁忌合规审核引擎"""
+    """文化禁忌合规审核引擎（AI优先，规则引擎fallback）"""
 
     CATEGORIES = ["文化冒犯", "宗教禁忌", "政治敏感", "文化挪用"]
     RISK_LEVELS = ["合规", "低风险", "高风险"]
 
     def __init__(self):
-        self.db = get_db()
         self.target_accuracy = {"text": 0.98, "image": 0.95}
+        self.ai = get_ai_service()
 
-    # ========== 文本审核（保持原有逻辑） ==========
+    def _get_db(self):
+        """获取数据库连接（线程安全）"""
+        return get_db()
+
+    # ========== 文本审核（AI优先，规则引擎fallback） ==========
 
     def audit_text(self, text: str, target_country: str) -> dict:
-        """文本合规审核"""
+        """文本合规审核（AI优先，规则引擎fallback）"""
         start = time.time()
+        
+        # 1. 尝试AI审核
+        if self.ai and self.ai.enabled:
+            ai_result = self.ai.audit_text(text, target_country)
+            if ai_result:
+                response_time_ms = int((time.time() - start) * 1000)
+                content_hash = hashlib.md5(text.encode()).hexdigest()
+                
+                db = self._get_db()
+                db.execute(
+                    """INSERT INTO audit_log (content_type, content_hash, target_country,
+                        risk_level, matched_rules, reason, suggestion, response_time_ms)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        "text",
+                        content_hash,
+                        target_country,
+                        ai_result.get("risk_level", "低风险"),
+                        json.dumps(ai_result.get("matched_rules", []), ensure_ascii=False),
+                        "; ".join(ai_result.get("reasons", [])) if ai_result.get("reasons") else None,
+                        "; ".join(ai_result.get("suggestions", [])) if ai_result.get("suggestions") else None,
+                        response_time_ms,
+                    ),
+                )
+                db.commit()
+                
+                return {
+                    "content_type": "text",
+                    "target_country": target_country,
+                    "risk_level": ai_result.get("risk_level", "低风险"),
+                    "matched_rules_count": len(ai_result.get("matched_rules", [])),
+                    "matched_rules": ai_result.get("matched_rules", []),
+                    "reasons": ai_result.get("reasons", []),
+                    "suggestions": ai_result.get("suggestions", []),
+                    "response_time_ms": response_time_ms,
+                    "status": "pass" if ai_result.get("risk_level") == "合规" else "review",
+                    "ai_used": True,
+                }
+        
+        # 2. Fallback到规则引擎
         matched_rules = []
         risk_level = "合规"
         reasons = []
         suggestions = []
 
-        cursor = self.db.cursor()
-        cursor.execute("""
-            SELECT * FROM compliance_rules
-            WHERE (country=? OR country='全球') AND status='active'
-        """, (target_country,))
+        db = self._get_db()
+        cursor = db.cursor()
+        cursor.execute(
+            """SELECT * FROM compliance_rules
+            WHERE (country=? OR country='全球') AND status='active'""",
+            (target_country,),
+        )
 
         rules = cursor.fetchall()
 
@@ -85,16 +135,22 @@ class ComplianceChecker:
         response_time_ms = int((time.time() - start) * 1000)
 
         content_hash = hashlib.md5(text.encode()).hexdigest()
-        self.db.execute("""
-            INSERT INTO audit_log (content_type, content_hash, target_country,
+        db.execute(
+            """INSERT INTO audit_log (content_type, content_hash, target_country,
                 risk_level, matched_rules, reason, suggestion, response_time_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, ("text", content_hash, target_country, risk_level,
-              json.dumps(matched_rules, ensure_ascii=False),
-              "; ".join(reasons) if reasons else None,
-              "; ".join(suggestions) if suggestions else None,
-              response_time_ms))
-        self.db.commit()
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "text",
+                content_hash,
+                target_country,
+                risk_level,
+                json.dumps(matched_rules, ensure_ascii=False),
+                "; ".join(reasons) if reasons else None,
+                "; ".join(suggestions) if suggestions else None,
+                response_time_ms,
+            ),
+        )
+        db.commit()
 
         return {
             "content_type": "text",
@@ -105,23 +161,28 @@ class ComplianceChecker:
             "reasons": reasons,
             "suggestions": suggestions,
             "response_time_ms": response_time_ms,
-            "status": "pass" if risk_level == "合规" else "review"
+            "status": "pass" if risk_level == "合规" else "review",
+            "ai_used": False,
         }
 
     # ========== 图片审核（基于真实图像内容分析） ==========
 
     def audit_image(self, image_path: str, target_country: str) -> dict:
-        """图片合规审核 — 基于真实图像色彩分析与规则库模式匹配"""
+        """图片合规审核 — 基于真实图像色彩分析与规则库模式匹配（AI优先，规则引擎fallback）"""
         start = time.time()
         matched_rules = []
         risk_level = "合规"
         reasons = []
 
-        cursor = self.db.cursor()
-        cursor.execute("""
+        db = self._get_db()
+        cursor = db.cursor()
+        cursor.execute(
+            """
             SELECT * FROM compliance_rules
             WHERE (country=? OR country='全球') AND status='active' AND pattern IS NOT NULL
-        """, (target_country,))
+        """,
+            (target_country,),
+        )
 
         rules = cursor.fetchall()
 
@@ -136,21 +197,26 @@ class ComplianceChecker:
         # ---- 第1层：高危色彩模式检测 ----
         if color_profile:
             for pattern_id, pattern_def in SENSITIVE_COLOR_PATTERNS.items():
-                if target_country not in pattern_def["countries"] and \
-                        "全球" not in pattern_def["countries"]:
+                if (
+                    target_country not in pattern_def["countries"]
+                    and "全球" not in pattern_def["countries"]
+                ):
                     continue
 
                 if self._match_color_pattern(color_profile, pattern_def):
-                    matched_rules.append({
-                        "id": f"color-{pattern_id}",
-                        "country": target_country,
-                        "category": "政治敏感" if "nazi" in pattern_id else
-                                    "文化冒犯",
-                        "risk_level": pattern_def["risk"],
-                        "reason": pattern_def["hint"],
-                        "suggestion": "建议人工复核图片内容，确认是否存在敏感符号",
-                        "keywords": "[]"
-                    })
+                    matched_rules.append(
+                        {
+                            "id": f"color-{pattern_id}",
+                            "country": target_country,
+                            "category": "政治敏感"
+                            if "nazi" in pattern_id
+                            else "文化冒犯",
+                            "risk_level": pattern_def["risk"],
+                            "reason": pattern_def["hint"],
+                            "suggestion": "建议人工复核图片内容，确认是否存在敏感符号",
+                            "keywords": "[]",
+                        }
+                    )
                     reasons.append(pattern_def["hint"])
 
         # ---- 第2层：规则库纹样/符号模式匹配 ----
@@ -163,13 +229,13 @@ class ComplianceChecker:
             # 2a: 色彩分析+纹样关键词匹配
             if color_profile and pattern:
                 matched = self._match_pattern_vs_colors(
-                    pattern, color_profile["color_names"], target_country)
+                    pattern, color_profile["color_names"], target_country
+                )
 
             # 2b: 规则关键词与色彩名匹配
             if color_profile and not matched:
                 for kw in keywords:
-                    if kw and any(kw in cn for cn in
-                                  color_profile["color_names"]):
+                    if kw and any(kw in cn for cn in color_profile["color_names"]):
                         matched = True
                         break
 
@@ -186,22 +252,29 @@ class ComplianceChecker:
                 reasons.append(rule["reason"])
 
         if matched_rules:
-            has_high = any(r.get("risk_level") == "高风险"
-                          for r in matched_rules)
+            has_high = any(r.get("risk_level") == "高风险" for r in matched_rules)
             risk_level = "高风险" if has_high else "低风险"
 
         response_time_ms = int((time.time() - start) * 1000)
 
         content_hash = hashlib.md5(image_path.encode()).hexdigest()
-        self.db.execute("""
+        db.execute(
+            """
             INSERT INTO audit_log (content_type, content_hash, target_country,
                 risk_level, matched_rules, reason, response_time_ms)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, ("image", content_hash, target_country, risk_level,
-              json.dumps(matched_rules, ensure_ascii=False),
-              "; ".join(reasons) if reasons else None,
-              response_time_ms))
-        self.db.commit()
+        """,
+            (
+                "image",
+                content_hash,
+                target_country,
+                risk_level,
+                json.dumps(matched_rules, ensure_ascii=False),
+                "; ".join(reasons) if reasons else None,
+                response_time_ms,
+            ),
+        )
+        db.commit()
 
         return {
             "content_type": "image",
@@ -212,25 +285,55 @@ class ComplianceChecker:
             "reasons": reasons,
             "response_time_ms": response_time_ms,
             "status": "pass" if risk_level == "合规" else "review",
-            "analysis_method": "color_profile" if color_profile else "filename"
+            "analysis_method": "color_profile" if color_profile else "filename",
         }
 
-    # ========== 图像分析辅助方法 ==========
+# ========== 图像分析辅助方法 ==========
+
+    # 项目数据目录基准路径
+    PROJECT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "data")
+
+    def _validate_path(self, path: str) -> str:
+        """
+        验证路径安全性，防止路径遍历攻击
+        只允许访问项目data目录下的文件
+        """
+        # 获取绝对路径
+        abs_path = os.path.abspath(path)
+        
+        # 检查是否在允许的目录范围内
+        if not abs_path.startswith(self.PROJECT_DATA_DIR):
+            raise ValueError(f"路径遍历攻击检测：不允许访问 {abs_path}，仅限项目data目录")
+        
+        # 检查是否存在路径遍历字符
+        if ".." in path or "~" in path:
+            raise ValueError(f"路径遍历攻击检测：路径包含非法字符 {path}")
+        
+        return abs_path
 
     def _load_image(self, path: str) -> Image.Image:
-        """加载图片"""
-        if not os.path.isabs(path):
-            candidates = [
-                path,
-                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-                    os.path.abspath(__file__)))), path),
-            ]
-        else:
-            candidates = [path]
+        """加载图片，支持相对路径和绝对路径，带路径验证"""
+        # 先验证路径安全性
+        validated_path = self._validate_path(path)
+        
+        if os.path.isfile(validated_path):
+            return Image.open(validated_path).convert("RGB")
+
+        # 如果验证后的路径不存在，尝试其他候选路径（也在data目录下）
+        candidates = [
+            validated_path,
+            os.path.join(self.PROJECT_DATA_DIR, path),
+        ]
 
         for p in candidates:
-            if os.path.isfile(p):
-                return Image.open(p).convert("RGB")
+            # 再次验证每个候选路径
+            try:
+                validated_p = self._validate_path(p)
+                if os.path.isfile(validated_p):
+                    return Image.open(validated_p).convert("RGB")
+            except ValueError:
+                continue  # 跳过非法路径
 
         raise FileNotFoundError(f"图片文件未找到: {path}")
 
@@ -338,8 +441,9 @@ class ComplianceChecker:
 
         return True
 
-    def _match_pattern_vs_colors(self, pattern: str, color_names: list,
-                                 country: str) -> bool:
+    def _match_pattern_vs_colors(
+        self, pattern: str, color_names: list, country: str
+    ) -> bool:
         """将纹样描述与色彩特征进行模糊匹配"""
         pattern_lower = pattern.lower() if pattern else ""
         colors_lower = " ".join(color_names).lower()
@@ -362,10 +466,12 @@ class ComplianceChecker:
 
         return False
 
-    # ========== 规则库管理（保持不变） ==========
+# ========== 规则库管理（保持不变） ==========
 
     def get_rules(self, page=1, per_page=50, country=None, category=None):
-        cursor = self.db.cursor()
+        """获取规则列表 - 使用安全的参数化查询"""
+        db = self._get_db()
+        cursor = db.cursor()
         conditions = ["1=1"]
         params = []
         if country:
@@ -389,21 +495,39 @@ class ComplianceChecker:
         items = [dict(row) for row in cursor.fetchall()]
         return {"total": total, "page": page, "items": items}
 
-    def add_rule(self, country: str, category: str, keywords: list,
-                 reason: str, suggestion: str, risk_level="高风险",
-                 pattern=None, region=None):
+    def add_rule(
+        self,
+        country: str,
+        category: str,
+        keywords: list,
+        reason: str,
+        suggestion: str,
+        risk_level="高风险",
+        pattern=None,
+        region=None,
+    ):
         cursor = self.db.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO compliance_rules (country, region, category, keywords,
                 pattern, risk_level, reason, suggestion)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (country, region, category,
-              json.dumps(keywords, ensure_ascii=False),
-              pattern, risk_level, reason, suggestion))
+        """,
+            (
+                country,
+                region,
+                category,
+                json.dumps(keywords, ensure_ascii=False),
+                pattern,
+                risk_level,
+                reason,
+                suggestion,
+            ),
+        )
         self.db.commit()
         return {"id": cursor.lastrowid, "message": "规则添加成功"}
 
-    def update_rule(self, rule_id: int, **kwargs):
+def update_rule(self, rule_id: int, **kwargs):
         allowed = ["country", "region", "category", "keywords", "pattern",
                    "risk_level", "reason", "suggestion", "status"]
         updates = {}
@@ -417,20 +541,24 @@ class ComplianceChecker:
 
         sets = ", ".join(f"{k}=?" for k in updates)
         values = list(updates.values()) + [rule_id]
-        self.db.execute(
+        db = self._get_db()
+        db.execute(
             f"UPDATE compliance_rules SET {sets}, "
             f"updated_at=CURRENT_TIMESTAMP WHERE id=?",
             values)
-        self.db.commit()
+        db.commit()
         return {"message": "规则更新成功"}
 
     def delete_rule(self, rule_id: int):
-        self.db.execute("DELETE FROM compliance_rules WHERE id=?", (rule_id,))
-        self.db.commit()
+        db = self._get_db()
+        db.execute("DELETE FROM compliance_rules WHERE id=?", (rule_id,))
+        db.commit()
         return {"message": "规则已删除"}
 
-    def get_audit_logs(self, page=1, per_page=50, risk_level=None):
-        cursor = self.db.cursor()
+def get_audit_logs(self, page=1, per_page=50, risk_level=None):
+        """获取审核日志 - 使用安全的参数化查询"""
+        db = self._get_db()
+        cursor = db.cursor()
         conditions = ["1=1"]
         params = []
         if risk_level:
@@ -450,8 +578,9 @@ class ComplianceChecker:
         items = [dict(row) for row in cursor.fetchall()]
         return {"total": total, "page": page, "items": items}
 
-    def get_stats(self):
-        cursor = self.db.cursor()
+def get_stats(self):
+        db = self._get_db()
+        cursor = db.cursor()
         cursor.execute(
             "SELECT COUNT(*) as cnt FROM compliance_rules WHERE status='active'")
         rules_count = cursor.fetchone()["cnt"]

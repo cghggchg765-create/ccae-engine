@@ -6,6 +6,121 @@ const CATEGORIES = ["形制","纹样","工艺","礼仪","朝代"];
 const REGIONS = ["北美","欧洲","日韩","东南亚","中东","拉美","全球"];
 const TABOO_CATS = ["文化冒犯","宗教禁忌","政治敏感","文化挪用"];
 
+// === 安全工具函数 ===
+
+/**
+ * 获取CSRF Token（从meta标签或cookie）
+ * @returns {string} - CSRF Token或空字符串
+ */
+function getCsrfToken() {
+  // 从meta标签获取
+  const meta = document.querySelector('meta[name="csrf-token"]');
+  if (meta) return meta.content;
+  // 从cookie获取
+  const match = document.cookie.match(/csrf_token=([^;]+)/);
+  return match ? match[1] : "";
+}
+
+/**
+ * 输入验证：检查文本长度和基本有效性
+ * @param {string} text - 待验证文本
+ * @param {number} minLen - 最小长度
+ * @param {number} maxLen - 最大长度
+ * @param {string} fieldName - 字段名称（用于错误提示）
+ * @returns {object} - {valid: boolean, error: string|null}
+ */
+function validateInput(text, minLen = 1, maxLen = 5000, fieldName = "输入") {
+  if (!text || typeof text !== "string") {
+    return { valid: false, error: `${fieldName}不能为空` };
+  }
+  const trimmed = text.trim();
+  if (trimmed.length < minLen) {
+    return { valid: false, error: `${fieldName}长度不能少于${minLen}个字符` };
+  }
+  if (trimmed.length > maxLen) {
+    return { valid: false, error: `${fieldName}长度不能超过${maxLen}个字符` };
+  }
+  return { valid: true, error: null, value: trimmed };
+}
+
+/**
+ * 设置按钮加载状态
+ * @param {HTMLElement|string} btnOrId - 按钮元素或ID
+ * @param {boolean} loading - 是否处于加载状态
+ * @param {string} loadingText - 加载时显示的文字
+ */
+function setButtonLoading(btnOrId, loading, loadingText = "处理中...") {
+  const btn = typeof btnOrId === "string" ? document.getElementById(btnOrId) : btnOrId;
+  if (!btn) return;
+  if (loading) {
+    btn.disabled = true;
+    btn.dataset.originalText = btn.textContent;
+    btn.textContent = loadingText;
+    btn.classList.add("btn-loading");
+  } else {
+    btn.disabled = false;
+    btn.textContent = btn.dataset.originalText || btn.textContent;
+    btn.classList.remove("btn-loading");
+  }
+}
+
+/**
+ * 统一的安全fetch封装，自动处理状态码、CSRF和错误
+ * @param {string} url - 请求URL
+ * @param {object} options - fetch选项
+ * @returns {Promise<object>} - 返回JSON数据
+ * @throws {Error} - HTTP错误或网络错误
+ */
+async function safeFetch(url, options = {}) {
+  // 自动添加CSRF Token到POST/PUT/DELETE请求
+  const method = (options.method || "GET").toUpperCase();
+  if (["POST", "PUT", "DELETE"].includes(method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      options.headers = options.headers || {};
+      options.headers["X-CSRF-Token"] = csrfToken;
+    }
+  }
+  
+  const res = await fetch(url, options);
+  
+  // 状态码验证
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    // 根据状态码提供友好错误信息
+    const friendlyErrors = {
+      400: "请求参数错误",
+      401: "未授权，请重新登录",
+      403: "权限不足",
+      404: "资源不存在",
+      429: "请求过于频繁，请稍后再试",
+      500: "服务器内部错误",
+      502: "服务暂时不可用",
+      503: "服务维护中"
+    };
+    const friendlyMsg = friendlyErrors[res.status] || `HTTP ${res.status}`;
+    throw new Error(err.error || friendlyMsg);
+  }
+  
+  return res.json();
+}
+
+/**
+ * HTML转义函数，防止XSS攻击
+ * @param {string} str - 待转义字符串
+ * @returns {string} - 转义后的安全字符串
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+    .replace(/\//g, "&#x2F;"); // 防止闭合标签攻击
+}
+
 // === 导航 ===
 document.querySelectorAll("#nav-menu li[data-page]").forEach(el => {
   el.onclick = () => {
@@ -30,26 +145,30 @@ async function loadPage(page) {
       case "settings": content.innerHTML = renderSettings(); await loadUsers(); break;
     }
   } catch(e) {
-    content.innerHTML = `<div class='panel'><p style='color:var(--danger)'>加载失败: ${e.message}</p></div>`;
+    content.innerHTML = `<div class='panel'><p style='color:var(--danger)'>加载失败: ${escapeHtml(e.message)}</p></div>`;
   }
 }
 
 // === 1. 数据看板 ===
 async function renderDashboard() {
   let stats = {};
-  try { const r = await fetch(API+"/dashboard/overview"); stats = await r.json(); } catch(e) {}
+  try {
+    stats = await safeFetch(API+"/dashboard/overview");
+  } catch(e) {
+    console.error("加载统计数据失败:", e);
+  }
   
   return `
     <h2 style="color:var(--accent);margin-bottom:20px">📊 数据看板</h2>
     <div class="stats-grid">
-      <div class="stat-card"><div class="label">语料库术语</div><div class="value">${stats.corpus_count||0}</div></div>
-      <div class="stat-card"><div class="label">合规规则</div><div class="value">${stats.rules_count||0}</div></div>
-      <div class="stat-card"><div class="label">30天翻译量</div><div class="value">${stats.monthly_translations||0}</div></div>
-      <div class="stat-card"><div class="label">翻译准确率</div><div class="value success">${(stats.avg_translation_confidence*100||0).toFixed(0)}%</div></div>
-      <div class="stat-card"><div class="label">审核通过率</div><div class="value success">${(stats.pass_rate*100||0).toFixed(0)}%</div></div>
-      <div class="stat-card"><div class="label">高风险率</div><div class="value danger">${(stats.high_risk_rate*100||0).toFixed(0)}%</div></div>
-      <div class="stat-card"><div class="label">视觉识别量</div><div class="value">${stats.vision_analyses||0}</div></div>
-      <div class="stat-card"><div class="label">知识库条目</div><div class="value">${stats.knowledge_entries||0}</div></div>
+      <div class="stat-card"><div class="label">语料库术语</div><div class="value">${escapeHtml(stats.corpus_count||0)}</div></div>
+      <div class="stat-card"><div class="label">合规规则</div><div class="value">${escapeHtml(stats.rules_count||0)}</div></div>
+      <div class="stat-card"><div class="label">30天翻译量</div><div class="value">${escapeHtml(stats.monthly_translations||0)}</div></div>
+      <div class="stat-card"><div class="label">翻译准确率</div><div class="value success">${escapeHtml(((stats.avg_translation_confidence||0)*100).toFixed(0))}%</div></div>
+      <div class="stat-card"><div class="label">审核通过率</div><div class="value success">${escapeHtml(((stats.pass_rate||0)*100).toFixed(0))}%</div></div>
+      <div class="stat-card"><div class="label">高风险率</div><div class="value danger">${escapeHtml(((stats.high_risk_rate||0)*100).toFixed(0))}%</div></div>
+      <div class="stat-card"><div class="label">视觉识别量</div><div class="value">${escapeHtml(stats.vision_analyses||0)}</div></div>
+      <div class="stat-card"><div class="label">知识库条目</div><div class="value">${escapeHtml(stats.knowledge_entries||0)}</div></div>
     </div>
     <div class="panel"><h2>⚡ 模块状态</h2>
       <table><tr><th>模块</th><th>优先级</th><th>状态</th><th>API端点</th></tr>
@@ -112,30 +231,56 @@ function renderTranslate() {
 async function loadCorpus(page=1) {
   const kw = document.getElementById("corpus-search")?.value || "";
   const cat = document.getElementById("corpus-cat")?.value || "";
-  const res = await fetch(`${API}/corpus?page=${page}&keyword=${kw}&category=${cat}`);
-  const data = await res.json();
-  document.getElementById("corpus-total").textContent = data.total;
-  document.getElementById("corpus-table").innerHTML = data.items.map(i => `
-    <tr>
-      <td>${i.id}</td><td><b>${i.term_zh}</b></td><td>${i.category}</td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i.cultural_note||"-"}</td>
-      <td><button class="btn btn-sm btn-outline" onclick="editTerm(${i.id})">编辑</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteTerm(${i.id})">删除</button></td>
-    </tr>`).join("");
+  try {
+    const data = await safeFetch(`${API}/corpus?page=${page}&keyword=${encodeURIComponent(kw)}&category=${encodeURIComponent(cat)}`);
+    document.getElementById("corpus-total").textContent = data.total;
+    document.getElementById("corpus-table").innerHTML = data.items.map(i => `
+      <tr>
+        <td>${escapeHtml(i.id)}</td>
+        <td><b>${escapeHtml(i.term_zh)}</b></td>
+        <td>${escapeHtml(i.category)}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(i.cultural_note||"-")}</td>
+        <td><button class="btn btn-sm btn-outline" onclick="editTerm(${escapeHtml(i.id)})">编辑</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteTerm(${escapeHtml(i.id)})">删除</button></td>
+      </tr>`).join("");
+  } catch(e) {
+    toast("加载语料库失败: " + e.message, "error");
+  }
 }
 
 async function doTranslate() {
   const text = document.getElementById("trans-input").value;
   const lang = document.getElementById("trans-lang").value;
-  if(!text) return;
-  const res = await fetch(API+"/translate", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text, target_lang:lang})});
-  const data = await res.json();
-  document.getElementById("trans-result").innerHTML = 
-    `<b>翻译结果：</b>${data.translated}<br>
-     <b>准确率：</b>${(data.confidence*100).toFixed(0)}% &nbsp;|&nbsp;
-     <b>耗时：</b>${data.response_time_ms}ms<br>
-     <b>匹配术语：</b>${data.matched_terms.map(t=>t.term).join(", ")||"无"}<br>
-     ${data.matched_terms.map(t=>`<small>📌 ${t.term}: ${t.cultural_note}</small><br>`).join("")}`;
+  
+  // 输入验证
+  const validation = validateInput(text, 1, 5000, "翻译文本");
+  if (!validation.valid) {
+    document.getElementById("trans-result").innerHTML = `<span style="color:var(--danger)">${escapeHtml(validation.error)}</span>`;
+    return;
+  }
+  
+  // 设置加载状态
+  const btn = document.querySelector("button[onclick='doTranslate()']");
+  setButtonLoading(btn, true, "翻译中...");
+  
+  try {
+    const data = await safeFetch(API+"/translate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: validation.value, target_lang: lang})
+    });
+    // 使用escapeHtml防止XSS
+    document.getElementById("trans-result").innerHTML = 
+      `<b>翻译结果：</b>${escapeHtml(data.translated)}<br>\
+       <b>准确率：</b>${(data.confidence*100).toFixed(0)}% &nbsp;|&nbsp;\
+       <b>耗时：</b>${escapeHtml(String(data.response_time_ms))}ms<br>\
+       <b>匹配术语：</b>${escapeHtml(data.matched_terms.map(t=>t.term).join(", ")||"无")}<br>\
+       ${data.matched_terms.map(t=>`<small>📌 ${escapeHtml(t.term)}: ${escapeHtml(t.cultural_note||"")}</small><br>`).join("")}`;
+  } catch(e) {
+    document.getElementById("trans-result").innerHTML = `<span style="color:var(--danger)">翻译失败: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
 function showAddTerm() { document.getElementById("add-term-form").style.display="block"; }
@@ -149,39 +294,77 @@ async function addTerm() {
   document.querySelectorAll("#new-translations input").forEach(inp => {
     if(inp.value) translations[inp.dataset.lang] = inp.value;
   });
-  if(!term_zh || !category) return toast("请填写术语和分类","error");
   
-  await fetch(API+"/corpus", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({term_zh, category, definition, cultural_note, translations})});
-  document.getElementById("add-term-form").style.display="none";
-  loadCorpus(); toast("术语添加成功","success");
+  // 输入验证
+  const termValidation = validateInput(term_zh, 1, 100, "中文术语");
+  if (!termValidation.valid) return toast(termValidation.error, "error");
+  
+  const btn = document.querySelector("button[onclick='addTerm()']");
+  setButtonLoading(btn, true, "添加中...");
+  
+  try {
+    await safeFetch(API+"/corpus", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({term_zh: termValidation.value, category, definition, cultural_note, translations})
+    });
+    document.getElementById("add-term-form").style.display="none";
+    loadCorpus();
+    toast("术语添加成功", "success");
+  } catch(e) {
+    toast("添加失败: " + e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
-async function deleteTerm(id) { if(confirm("确认删除？")){ await fetch(API+"/corpus/"+id, {method:"DELETE"}); loadCorpus(); toast("已删除","success"); } }
+async function deleteTerm(id) {
+  if(!confirm("确认删除？")) return;
+  try {
+    await safeFetch(API+"/corpus/"+id, {method: "DELETE"});
+    loadCorpus();
+    toast("已删除", "success");
+  } catch(e) {
+    toast("删除失败: " + e.message, "error");
+  }
+}
 
 // ---- 术语编辑弹窗 ----
 async function editTerm(id) {
-  const res = await fetch(API+"/corpus?page=1&per_page=100");
-  const data = await res.json();
-  const term = data.items.find(t => t.id === id);
-  if (!term) return toast("术语未找到", "error");
-  showEditModal({
-    title: "编辑术语",
-    fields: [
-      {label:"中文术语", name:"term_zh", value:term.term_zh, type:"text"},
-      {label:"分类", name:"category", value:term.category, type:"select", options:CATEGORIES},
-      {label:"释义", name:"definition", value:term.definition||"", type:"text"},
-      {label:"文化注释", name:"cultural_note", value:term.cultural_note||"", type:"text"},
-      {label:"标签（逗号分隔）", name:"tags", value:typeof term.tags==="string"?term.tags:JSON.parse(term.tags||"[]").join(","), type:"text"},
-    ],
-    translations: typeof term.translations==="string"?JSON.parse(term.translations):(term.translations||{}),
-    onSave: async (formData) => {
-      const body = {};
-      for (const [k,v] of formData) { body[k] = v; }
-      await fetch(API+"/corpus/"+id, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      loadCorpus(); toast("术语更新成功","success");
-      closeModal();
-    }
-  });
+  try {
+    const data = await safeFetch(API+"/corpus?page=1&per_page=100");
+    const term = data.items.find(t => t.id === id);
+    if (!term) return toast("术语未找到", "error");
+    showEditModal({
+      title: "编辑术语",
+      fields: [
+        {label:"中文术语", name:"term_zh", value:term.term_zh, type:"text"},
+        {label:"分类", name:"category", value:term.category, type:"select", options:CATEGORIES},
+        {label:"释义", name:"definition", value:term.definition||"", type:"text"},
+        {label:"文化注释", name:"cultural_note", value:term.cultural_note||"", type:"text"},
+        {label:"标签（逗号分隔）", name:"tags", value:typeof term.tags==="string"?term.tags:JSON.parse(term.tags||"[]").join(","), type:"text"},
+      ],
+      translations: typeof term.translations==="string"?JSON.parse(term.translations):(term.translations||{}),
+      onSave: async (formData) => {
+        const body = {};
+        for (const [k,v] of formData) { body[k] = v; }
+        try {
+          await safeFetch(API+"/corpus/"+id, {
+            method: "PUT",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(body)
+          });
+          loadCorpus();
+          toast("术语更新成功", "success");
+          closeModal();
+        } catch(e) {
+          toast("更新失败: " + e.message, "error");
+        }
+      }
+    });
+  } catch(e) {
+    toast("加载术语失败: " + e.message, "error");
+  }
 }
 
 // ---- 通用编辑弹窗 ----
@@ -241,10 +424,6 @@ function closeModal() {
   if (m) m.remove();
 }
 
-function escapeHtml(str) {
-  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-
 // === 3. 合规审核 ===
 function renderCompliance() {
   return `
@@ -288,36 +467,65 @@ function renderCompliance() {
 async function loadRules() {
   const country = document.getElementById("rules-country")?.value||"";
   const cat = document.getElementById("rules-cat")?.value||"";
-  const res = await fetch(`${API}/compliance/rules?country=${country}&category=${cat}`);
-  const data = await res.json();
-  document.getElementById("rules-total").textContent = data.total;
-  document.getElementById("rules-table").innerHTML = data.items.map(r => `
-    <tr><td>${r.id}</td><td>${r.country}</td><td>${r.category}</td>
-      <td><span class="badge ${r.risk_level==='高风险'?'badge-high':'badge-review'}">${r.risk_level}</span></td>
-      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.reason}</td>
-      <td><button class="btn btn-sm btn-outline" onclick="editRule(${r.id})">编辑</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteRule(${r.id})">删除</button></td></tr>`).join("");
-  // 填充国家下拉
-  document.getElementById("rules-country").innerHTML = '<option value="">全部国家</option>'+
-    [...new Set(data.items.map(r=>r.country))].map(c=>`<option value="${c}">${c}</option>`).join("");
+  try {
+    const data = await safeFetch(`${API}/compliance/rules?country=${encodeURIComponent(country)}&category=${encodeURIComponent(cat)}`);
+    document.getElementById("rules-total").textContent = data.total;
+    document.getElementById("rules-table").innerHTML = data.items.map(r => `
+      <tr>
+        <td>${escapeHtml(r.id)}</td>
+        <td>${escapeHtml(r.country)}</td>
+        <td>${escapeHtml(r.category)}</td>
+        <td><span class="badge ${r.risk_level==='高风险'?'badge-high':'badge-review'}">${escapeHtml(r.risk_level)}</span></td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.reason)}</td>
+        <td><button class="btn btn-sm btn-outline" onclick="editRule(${escapeHtml(r.id)})">编辑</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteRule(${escapeHtml(r.id)})">删除</button></td>
+      </tr>`).join("");
+    // 填充国家下拉
+    document.getElementById("rules-country").innerHTML = '<option value="">全部国家</option>'+
+      [...new Set(data.items.map(r=>r.country))].map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  } catch(e) {
+    toast("加载规则失败: " + e.message, "error");
+  }
 }
 
 async function doAuditText() {
   const text = document.getElementById("audit-text").value;
   const country = document.getElementById("audit-country").value;
-  if(!text) return;
-  const res = await fetch(API+"/compliance/audit/text", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text, country})});
-  const data = await res.json();
-  const badge = data.risk_level==="合规" ? "badge-pass" : data.risk_level==="低风险" ? "badge-review" : "badge-high";
-  document.getElementById("audit-result").innerHTML = `
-    <span class="badge ${badge}">${data.risk_level}</span> &nbsp;
-    <b>耗时：</b>${data.response_time_ms}ms<br>
-    <b>匹配规则：</b>${data.matched_rules_count}条<br>
-    ${data.reasons.length ? `<b>⚠️ 风险原因：</b>${data.reasons.join("；")}<br>`:""}
-    ${data.suggestions.length ? `<b>💡 修改建议：</b>${data.suggestions.join("；")}`:""}`;
+  
+  // 输入验证
+  const validation = validateInput(text, 1, 5000, "审核文本");
+  if (!validation.valid) {
+    document.getElementById("audit-result").innerHTML = `<span style="color:var(--danger)">${escapeHtml(validation.error)}</span>`;
+    return;
+  }
+  
+  // 设置加载状态
+  const btn = document.querySelector("button[onclick='doAuditText()']");
+  setButtonLoading(btn, true, "审核中...");
+  
+  try {
+    const data = await safeFetch(API+"/compliance/audit/text", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: validation.value, country})
+    });
+    const badge = data.risk_level==="合规" ? "badge-pass" : data.risk_level==="低风险" ? "badge-review" : "badge-high";
+    // 使用escapeHtml防止XSS
+    document.getElementById("audit-result").innerHTML = `
+      <span class="badge ${badge}">${escapeHtml(data.risk_level)}</span> &nbsp;
+      <b>耗时：</b>${escapeHtml(String(data.response_time_ms))}ms<br>
+      <b>匹配规则：</b>${escapeHtml(String(data.matched_rules_count))}条<br>
+      ${data.reasons.length ? `<b>⚠️ 风险原因：</b>${escapeHtml(data.reasons.join("；"))}<br>`:""}
+      ${data.suggestions.length ? `<b>💡 修改建议：</b>${escapeHtml(data.suggestions.join("；"))}`:""}`;
+  } catch(e) {
+    document.getElementById("audit-result").innerHTML = `<span style="color:var(--danger)">审核失败: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
 function showAddRule() { document.getElementById("add-rule-form").style.display="block"; }
+
 async function addRule() {
   const data = {
     country: document.getElementById("new-rule-country").value,
@@ -327,44 +535,86 @@ async function addRule() {
     suggestion: document.getElementById("new-rule-sugg").value,
     risk_level: document.getElementById("new-rule-risk").value,
   };
-  if(!data.country||!data.category||!data.keywords.length) return toast("请填写必填字段","error");
-  await fetch(API+"/compliance/rules", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
-  document.getElementById("add-rule-form").style.display="none";
-  loadRules(); toast("规则添加成功","success");
+  
+  // 输入验证
+  const countryValidation = validateInput(data.country, 1, 50, "国家");
+  if (!countryValidation.valid) return toast(countryValidation.error, "error");
+  if (!data.category) return toast("请选择类别", "error");
+  if (!data.keywords.length) return toast("请填写敏感词", "error");
+  
+  const btn = document.querySelector("button[onclick='addRule()']");
+  setButtonLoading(btn, true, "添加中...");
+  
+  try {
+    await safeFetch(API+"/compliance/rules", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(data)
+    });
+    document.getElementById("add-rule-form").style.display="none";
+    loadRules();
+    toast("规则添加成功", "success");
+  } catch(e) {
+    toast("添加失败: " + e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
-async function deleteRule(id) { if(confirm("确认删除？")){ await fetch(API+"/compliance/rules/"+id,{method:"DELETE"}); loadRules(); } }
+
+async function deleteRule(id) {
+  if(!confirm("确认删除？")) return;
+  try {
+    await safeFetch(API+"/compliance/rules/"+id, {method: "DELETE"});
+    loadRules();
+    toast("已删除", "success");
+  } catch(e) {
+    toast("删除失败: " + e.message, "error");
+  }
+}
 
 async function editRule(id) {
-  const res = await fetch(API+"/compliance/rules?page=1&per_page=100");
-  const data = await res.json();
-  const rule = data.items.find(r => r.id === id);
-  if (!rule) return toast("规则未找到", "error");
+  try {
+    const data = await safeFetch(API+"/compliance/rules?page=1&per_page=100");
+    const rule = data.items.find(r => r.id === id);
+    if (!rule) return toast("规则未找到", "error");
 
-  let kwStr = "";
-  try { kwStr = (typeof rule.keywords==="string"?JSON.parse(rule.keywords):rule.keywords).join(","); } catch(e) {}
+    let kwStr = "";
+    try { kwStr = (typeof rule.keywords==="string"?JSON.parse(rule.keywords):rule.keywords).join(","); } catch(e) {}
 
-  showEditModal({
-    title: "编辑合规规则",
-    fields: [
-      {label:"国家", name:"country", value:rule.country, type:"text"},
-      {label:"区域", name:"region", value:rule.region||"", type:"text"},
-      {label:"类别", name:"category", value:rule.category, type:"select", options:TABOO_CATS},
-      {label:"敏感词（逗号分隔）", name:"keywords", value:kwStr, type:"text"},
-      {label:"纹样/符号描述", name:"pattern", value:rule.pattern||"", type:"text"},
-      {label:"风险等级", name:"risk_level", value:rule.risk_level, type:"select", options:["高风险","低风险"]},
-      {label:"风险原因", name:"reason", value:rule.reason||"", type:"text"},
-      {label:"修改建议", name:"suggestion", value:rule.suggestion||"", type:"text"},
-    ],
-    onSave: async (formData) => {
-      const body = {};
-      for (const [k,v] of formData) {
-        body[k] = k === "keywords" ? JSON.stringify(v.split(",").map(s=>s.trim()).filter(Boolean)) : v;
+    showEditModal({
+      title: "编辑合规规则",
+      fields: [
+        {label:"国家", name:"country", value:rule.country, type:"text"},
+        {label:"区域", name:"region", value:rule.region||"", type:"text"},
+        {label:"类别", name:"category", value:rule.category, type:"select", options:TABOO_CATS},
+        {label:"敏感词（逗号分隔）", name:"keywords", value:kwStr, type:"text"},
+        {label:"纹样/符号描述", name:"pattern", value:rule.pattern||"", type:"text"},
+        {label:"风险等级", name:"risk_level", value:rule.risk_level, type:"select", options:["高风险","低风险"]},
+        {label:"风险原因", name:"reason", value:rule.reason||"", type:"text"},
+        {label:"修改建议", name:"suggestion", value:rule.suggestion||"", type:"text"},
+      ],
+      onSave: async (formData) => {
+        const body = {};
+        for (const [k,v] of formData) {
+          body[k] = k === "keywords" ? JSON.stringify(v.split(",").map(s=>s.trim()).filter(Boolean)) : v;
+        }
+        try {
+          await safeFetch(API+"/compliance/rules/"+id, {
+            method: "PUT",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(body)
+          });
+          loadRules();
+          toast("规则更新成功", "success");
+          closeModal();
+        } catch(e) {
+          toast("更新失败: " + e.message, "error");
+        }
       }
-      await fetch(API+"/compliance/rules/"+id, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      loadRules(); toast("规则更新成功","success");
-      closeModal();
-    }
-  });
+    });
+  } catch(e) {
+    toast("加载规则失败: " + e.message, "error");
+  }
 }
 
 // === 4. 视觉识别 ===
@@ -388,27 +638,85 @@ function renderVision() {
     </div>`;
 }
 async function loadPreferences() {
-  const res = await fetch(API+"/vision/preferences"); const data = await res.json();
-  document.getElementById("pref-total").textContent = data.length;
-  document.getElementById("pref-list").innerHTML = data.map(p => `
-    <div style="display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid var(--border);align-items:center">
-      <span><b>${p.region}</b> → ${p.category}: ${p.preference} <small style="color:var(--text-muted)">权重${p.weight}</small></span>
-      <button class="btn btn-sm btn-danger" onclick="deletePref(${p.id})">×</button>
-    </div>`).join("");
+  try {
+    const data = await safeFetch(API+"/vision/preferences");
+    document.getElementById("pref-total").textContent = data.length;
+    document.getElementById("pref-list").innerHTML = data.map(p => `
+      <div style="display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid var(--border);align-items:center">
+        <span><b>${escapeHtml(p.region)}</b> → ${escapeHtml(p.category)}: ${escapeHtml(p.preference)} <small style="color:var(--text-muted)">权重${escapeHtml(p.weight)}</small></span>
+        <button class="btn btn-sm btn-danger" onclick="deletePref(${escapeHtml(p.id)})">×</button>
+      </div>`).join("");
+  } catch(e) {
+    toast("加载偏好失败: " + e.message, "error");
+  }
 }
+
 async function addPreference() {
-  const d = { region: document.getElementById("pref-region").value, category: document.getElementById("pref-cat").value, preference: document.getElementById("pref-value").value };
-  if(!d.preference) return;
-  await fetch(API+"/vision/preferences", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});
-  loadPreferences(); toast("添加成功","success");
+  const d = { 
+    region: document.getElementById("pref-region").value, 
+    category: document.getElementById("pref-cat").value, 
+    preference: document.getElementById("pref-value").value 
+  };
+  
+  // 输入验证
+  const prefValidation = validateInput(d.preference, 1, 200, "偏好描述");
+  if (!prefValidation.valid) return toast(prefValidation.error, "error");
+  
+  const btn = document.querySelector("button[onclick='addPreference()']");
+  setButtonLoading(btn, true, "添加中...");
+  
+  try {
+    await safeFetch(API+"/vision/preferences", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(d)
+    });
+    loadPreferences();
+    toast("添加成功", "success");
+  } catch(e) {
+    toast("添加失败: " + e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
-async function deletePref(id) { await fetch(API+"/vision/preferences/"+id,{method:"DELETE"}); loadPreferences(); }
+
+async function deletePref(id) {
+  try {
+    await safeFetch(API+"/vision/preferences/"+id, {method: "DELETE"});
+    loadPreferences();
+  } catch(e) {
+    toast("删除失败: " + e.message, "error");
+  }
+}
+
 async function doVision() {
   const path = document.getElementById("vision-path").value;
-  if(!path) return;
-  const res = await fetch(API+"/vision/analyze", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image_path:path})});
-  const d = await res.json();
-  document.getElementById("vision-result").innerHTML = `<b>朝代：</b>${d.dynasty} | <b>形制：</b>${d.format} | <b>色彩：</b>${d.colors?.join(", ")} | <b>纹样：</b>${d.patterns?.join(", ")} | <b>准确率：</b>${(d.confidence*100).toFixed(0)}%`;
+  
+  // 输入验证
+  const pathValidation = validateInput(path, 1, 500, "图片路径");
+  if (!pathValidation.valid) {
+    document.getElementById("vision-result").innerHTML = `<span style="color:var(--danger)">${escapeHtml(pathValidation.error)}</span>`;
+    return;
+  }
+  
+  // 设置加载状态
+  const btn = document.querySelector("button[onclick='doVision()']");
+  setButtonLoading(btn, true, "识别中...");
+  
+  try {
+    const d = await safeFetch(API+"/vision/analyze", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({image_path: pathValidation.value})
+    });
+    // 使用escapeHtml防止XSS
+    document.getElementById("vision-result").innerHTML = 
+      `<b>朝代：</b>${escapeHtml(d.dynasty)} | <b>形制：</b>${escapeHtml(d.format)} | <b>色彩：</b>${escapeHtml(d.colors?.join(", ")||"")} | <b>纹样：</b>${escapeHtml(d.patterns?.join(", ")||"")} | <b>准确率：</b>${(d.confidence*100).toFixed(0)}%`;
+  } catch(e) {
+    document.getElementById("vision-result").innerHTML = `<span style="color:var(--danger)">识别失败: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
 // === 5. 知识库 ===
@@ -432,20 +740,49 @@ function renderKnowledge() {
     </div>`;
 }
 async function loadKnowledge() {
-  const kw = document.getElementById("kb-search")?.value||""; const cat = document.getElementById("kb-cat")?.value||"";
-  const res = await fetch(`${API}/knowledge?keyword=${kw}&category=${cat}`); const data = await res.json();
-  document.getElementById("kb-list").innerHTML = data.items.map(i => `
-    <div style="padding:12px;border-bottom:1px solid var(--border)">
-      <b>${i.title_zh}</b> <span class="badge badge-pass">${i.category}</span>
-      <p style="color:var(--text-muted);margin-top:4px">${(i.content_zh||"").substring(0,150)}...</p>
-    </div>`).join("") || "<p style='color:var(--text-muted)'>无结果</p>";
+  const kw = document.getElementById("kb-search")?.value||"";
+  const cat = document.getElementById("kb-cat")?.value||"";
+  try {
+    const data = await safeFetch(`${API}/knowledge?keyword=${encodeURIComponent(kw)}&category=${encodeURIComponent(cat)}`);
+    document.getElementById("kb-list").innerHTML = data.items.map(i => `
+      <div style="padding:12px;border-bottom:1px solid var(--border)">
+        <b>${escapeHtml(i.title_zh)}</b> <span class="badge badge-pass">${escapeHtml(i.category)}</span>
+        <p style="color:var(--text-muted);margin-top:4px">${(i.content_zh||"").substring(0,150)}...</p>
+      </div>`).join("") || "<p style='color:var(--text-muted)'>无结果</p>";
+  } catch(e) {
+    toast("加载知识库失败: " + e.message, "error");
+  }
 }
+
 async function genCopy() {
-  const topic = document.getElementById("copy-topic").value; const region = document.getElementById("copy-region").value;
-  if(!topic) return;
-  const res = await fetch(API+"/knowledge/generate-copy", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({topic, region})});
-  const d = await res.json();
-  document.getElementById("copy-result").innerHTML = `<b>📝 文案：</b>${d.short_copy}<br><b>🏷️ 标签：</b>${d.hashtags.join(" ")}<br><b>📌 文化注释：</b>${d.cultural_note}`;
+  const topic = document.getElementById("copy-topic").value;
+  const region = document.getElementById("copy-region").value;
+  
+  // 输入验证
+  const topicValidation = validateInput(topic, 1, 200, "主题");
+  if (!topicValidation.valid) {
+    document.getElementById("copy-result").innerHTML = `<span style="color:var(--danger)">${escapeHtml(topicValidation.error)}</span>`;
+    return;
+  }
+  
+  // 设置加载状态
+  const btn = document.querySelector("button[onclick='genCopy()']");
+  setButtonLoading(btn, true, "生成中...");
+  
+  try {
+    const d = await safeFetch(API+"/knowledge/generate-copy", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({topic: topicValidation.value, region})
+    });
+    // 使用escapeHtml防止XSS
+    document.getElementById("copy-result").innerHTML = 
+      `<b>📝 文案：</b>${escapeHtml(d.short_copy)}<br><b>🏷️ 标签：</b>${escapeHtml(d.hashtags.join(" "))}<br><b>📌 文化注释：</b>${escapeHtml(d.cultural_note)}`;
+  } catch(e) {
+    document.getElementById("copy-result").innerHTML = `<span style="color:var(--danger)">生成失败: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
 // === 6. 推荐 ===
@@ -457,11 +794,25 @@ function renderRecommend() {
     </div>`;
 }
 async function testRecommend() {
-  const res = await fetch(API+"/recommend", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-    user_profile:{age:"25-34",interests:["fashion","culture"],region:"北美"},
-    visual_tags:{colors:["红色","金色"],patterns:["云纹"]},region:"北美"})});
-  const d = await res.json();
-  document.getElementById("rec-result").innerHTML = `<pre style="white-space:pre-wrap">${JSON.stringify(d,null,2)}</pre>`;
+  const btn = document.querySelector("button[onclick='testRecommend()']");
+  setButtonLoading(btn, true, "推荐中...");
+  
+  try {
+    const d = await safeFetch(API+"/recommend", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        user_profile:{age:"25-34",interests:["fashion","culture"],region:"北美"},
+        visual_tags:{colors:["红色","金色"],patterns:["云纹"]},
+        region:"北美"
+      })
+    });
+    document.getElementById("rec-result").innerHTML = `<pre style="white-space:pre-wrap">${escapeHtml(JSON.stringify(d,null,2))}</pre>`;
+  } catch(e) {
+    document.getElementById("rec-result").innerHTML = `<span style="color:var(--danger)">推荐失败: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
 
 // === 7. 设置 ===
@@ -477,23 +828,69 @@ function renderSettings() {
       </div>
     </div>
     <div class="panel"><h2>ℹ️ 系统信息</h2>
-      <p>版本：1.0.0 | Python Flask + SQLite | 默认账户：admin / admin123</p>
+      <p>版本：1.0.0 | Python Flask + SQLite | 默认账户：admin（请联系管理员获取初始密码）</p>
     </div>`;
 }
 async function loadUsers() {
-  const res = await fetch(API+"/users"); const data = await res.json();
-  document.getElementById("user-list").innerHTML = `
-    <table><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr>
-    ${data.map(u=>`<tr><td>${u.id}</td><td><b>${u.username}</b></td><td><span class="badge badge-pass">${u.role}</span></td><td>${u.status}</td><td><button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})" ${u.role==='superadmin'?'disabled':''}>删除</button></td></tr>`).join("")}
-    </table>`;
+  try {
+    const data = await safeFetch(API+"/users");
+    document.getElementById("user-list").innerHTML = `
+      <table><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr>
+      ${data.map(u=>`<tr>
+        <td>${escapeHtml(u.id)}</td>
+        <td><b>${escapeHtml(u.username)}</b></td>
+        <td><span class="badge badge-pass">${escapeHtml(u.role)}</span></td>
+        <td>${escapeHtml(u.status)}</td>
+        <td><button class="btn btn-sm btn-danger" onclick="deleteUser(${escapeHtml(u.id)})" ${u.role==='superadmin'?'disabled':''}>删除</button></td>
+      </tr>`).join("")}
+      </table>`;
+  } catch(e) {
+    toast("加载用户失败: " + e.message, "error");
+  }
 }
+
 async function addUser() {
-  const d = { username: document.getElementById("new-user").value, password: document.getElementById("new-pw").value, role: document.getElementById("new-role").value };
-  if(!d.username||!d.password) return toast("请填写用户名和密码","error");
-  await fetch(API+"/users",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});
-  loadUsers(); toast("用户创建成功","success");
+  const d = { 
+    username: document.getElementById("new-user").value, 
+    password: document.getElementById("new-pw").value, 
+    role: document.getElementById("new-role").value 
+  };
+  
+  // 输入验证
+  const userValidation = validateInput(d.username, 2, 50, "用户名");
+  if (!userValidation.valid) return toast(userValidation.error, "error");
+  
+  const pwValidation = validateInput(d.password, 6, 100, "密码");
+  if (!pwValidation.valid) return toast(pwValidation.error, "error");
+  
+  const btn = document.querySelector("button[onclick='addUser()']");
+  setButtonLoading(btn, true, "创建中...");
+  
+  try {
+    await safeFetch(API+"/users", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({username: userValidation.value, password: pwValidation.value, role: d.role})
+    });
+    loadUsers();
+    toast("用户创建成功", "success");
+  } catch(e) {
+    toast("创建失败: " + e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
 }
-async function deleteUser(id) { if(confirm("确认删除？")){ await fetch(API+"/users/"+id,{method:"DELETE"}); loadUsers(); } }
+
+async function deleteUser(id) {
+  if(!confirm("确认删除？")) return;
+  try {
+    await safeFetch(API+"/users/"+id, {method: "DELETE"});
+    loadUsers();
+    toast("已删除", "success");
+  } catch(e) {
+    toast("删除失败: " + e.message, "error");
+  }
+}
 
 // === 工具函数 ===
 function toast(msg, type="success") {

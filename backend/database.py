@@ -6,6 +6,7 @@ from config import Config
 
 DB_PATH = Config.DATABASE
 
+
 def get_db():
     """获取数据库连接（线程安全）"""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -15,11 +16,12 @@ def get_db():
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
+
 def init_db():
     """初始化所有数据表"""
     conn = get_db()
     cursor = conn.cursor()
-    
+
     # 1. 语料库表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS corpus (
@@ -35,7 +37,7 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 2. 翻译日志表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS translation_log (
@@ -49,7 +51,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 3. 合规规则库表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS compliance_rules (
@@ -67,7 +69,7 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 4. 审核日志表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_log (
@@ -84,7 +86,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 5. 视觉识别日志表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vision_log (
@@ -99,7 +101,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 6. 区域审美库表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS aesthetic_preferences (
@@ -112,7 +114,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 7. 文化知识库表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS knowledge_base (
@@ -126,7 +128,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 8. 推荐日志表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS recommend_log (
@@ -139,7 +141,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 9. 视频审核日志表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS video_audit_log (
@@ -153,7 +155,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 10. 用户权限表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -165,7 +167,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 11. 操作日志表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS operation_log (
@@ -178,7 +180,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     # 12. API调用统计表
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS api_stats (
@@ -190,18 +192,42 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
-    # 插入默认管理员
+
+    # 插入默认管理员 - 使用bcrypt哈希
+    import secrets
     import hashlib
-    admin_pw = hashlib.sha256("admin123".encode()).hexdigest()
-    cursor.execute("""
+
+    # 生成随机强密码
+    default_password = secrets.token_urlsafe(16)
+    # 使用SHA256作为bcrypt不可用时的备选方案
+    # 生产环境建议安装bcrypt: pip install bcrypt
+    try:
+        import bcrypt
+
+        admin_pw = bcrypt.hashpw(default_password.encode(), bcrypt.gensalt()).decode()
+        hash_method = "bcrypt"
+    except ImportError:
+        # bcrypt不可用时使用SHA256+salt
+        salt = secrets.token_hex(16)
+        admin_pw = f"sha256${salt}${hashlib.sha256((salt + default_password).encode()).hexdigest()}"
+        hash_method = "sha256"
+
+    cursor.execute(
+        """
         INSERT OR IGNORE INTO users (username, password_hash, role)
         VALUES ('admin', ?, 'superadmin')
-    """, (admin_pw,))
-    
+    """,
+        (admin_pw,),
+    )
+
     conn.commit()
     conn.close()
     print("[OK] Database initialized:", DB_PATH)
+    print(f"[!] 默认管理员账户: admin")
+    print(f"[!] 默认密码: {default_password}")
+    print(f"[!] 哈希方法: {hash_method}")
+    print("[!] ⚠️  请立即登录并修改默认密码！生产环境请删除此账户！")
+
 
 if __name__ == "__main__":
     init_db()

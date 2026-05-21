@@ -3,6 +3,14 @@
 
 Set-Location "$PSScriptRoot"
 
+:: Check for virtual environment
+if (Test-Path "venv\Scripts\Activate.ps1") {
+    & "venv\Scripts\Activate.ps1"
+    Write-Host "[OK] Virtual environment activated" -ForegroundColor Green
+} else {
+    Write-Host "[WARN] No venv found, using system Python" -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "  CCAE | Cross-Cultural Adaptation Engine"       -ForegroundColor Yellow

@@ -33,7 +33,7 @@ examples:
         """,
     )
     parser.add_argument(
-        "--host", default="0.0.0.0", help="bind address (default: 0.0.0.0)"
+        "--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)"
     )
     parser.add_argument(
         "--port", type=int, default=5000, help="bind port (default: 5000)"
@@ -55,7 +55,9 @@ def main():
     init_db()
     seed_initial_data()
 
-    debug = not args.no_debug
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() in ("true", "1", "yes")
+    if not args.no_debug:
+        debug = True
     print("=" * 50)
     print("  CCAE Cross-Cultural Adaptation Engine")
     print("=" * 50)

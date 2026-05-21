@@ -4,6 +4,14 @@ setlocal
 
 cd /d "%~dp0"
 
+:: Check for virtual environment
+if exist "venv\Scripts\activate.bat" (
+    call venv\Scripts\activate.bat
+    echo [OK] Virtual environment activated
+) else (
+    echo [WARN] No venv found, using system Python
+)
+
 echo.
 echo ================================================
 echo   CCAE ^| Cross-Cultural Adaptation Engine

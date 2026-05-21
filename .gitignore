@@ -9,6 +9,20 @@ build/
 venv/
 env/
 
+# 环境变量文件（包含敏感信息）
+.env
+.env.local
+.env.production
+*.env
+
+# 敏感配置文件
+secrets.json
+secrets.yaml
+credentials.json
+*.pem
+*.key
+*.crt
+
 # Database
 data/*.db
 data/*.db-shm
@@ -29,3 +43,16 @@ node_modules/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+temp/
+tmp/
+*.tmp
+
+# 上传文件（可能包含敏感内容）
+uploads/
+
