@@ -136,13 +136,16 @@ async function loadPage(page) {
   content.innerHTML = "<div class='panel'><p style='text-align:center;color:var(--text-muted);padding:40px'>加载中...</p></div>";
   try {
     switch(page) {
-      case "dashboard": content.innerHTML = await renderDashboard(); break;
+      case "dashboard":
+        content.innerHTML = await renderDashboard();
+        setTimeout(renderDashboardCharts, 100);
+        break;
       case "translate": content.innerHTML = renderTranslate(); await loadCorpus(); break;
       case "compliance": content.innerHTML = renderCompliance(); await loadRules(); break;
       case "vision": content.innerHTML = renderVision(); await loadPreferences(); break;
       case "knowledge": content.innerHTML = renderKnowledge(); await loadKnowledge(); break;
       case "recommend": content.innerHTML = renderRecommend(); break;
-      case "settings": content.innerHTML = renderSettings(); await loadUsers(); break;
+      case "settings": content.innerHTML = renderSettings(); await loadProviders(); await loadUsers(); break;
     }
   } catch(e) {
     content.innerHTML = `<div class='panel'><p style='color:var(--danger)'>加载失败: ${escapeHtml(e.message)}</p></div>`;
@@ -157,7 +160,7 @@ async function renderDashboard() {
   } catch(e) {
     console.error("加载统计数据失败:", e);
   }
-  
+
   return `
     <h2 style="color:var(--accent);margin-bottom:20px">📊 数据看板</h2>
     <div class="stats-grid">
@@ -170,6 +173,23 @@ async function renderDashboard() {
       <div class="stat-card"><div class="label">视觉识别量</div><div class="value">${escapeHtml(stats.vision_analyses||0)}</div></div>
       <div class="stat-card"><div class="label">知识库条目</div><div class="value">${escapeHtml(stats.knowledge_entries||0)}</div></div>
     </div>
+
+    <!-- 图表区域 -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px">
+      <div class="panel">
+        <h2>📈 趋势分析（近7天）</h2>
+        <div style="height:300px">
+          <canvas id="trend-chart"></canvas>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>📊 模块使用占比</h2>
+        <div style="height:300px">
+          <canvas id="usage-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
     <div class="panel"><h2>⚡ 模块状态</h2>
       <table><tr><th>模块</th><th>优先级</th><th>状态</th><th>API端点</th></tr>
         <tr><td>🌐 智能翻译</td><td>P0</td><td><span class="badge badge-pass">运行中</span></td><td>POST /api/translate</td></tr>
@@ -179,6 +199,60 @@ async function renderDashboard() {
         <tr><td>🎯 推荐引擎</td><td>P2</td><td><span class="badge badge-review">开发中</span></td><td>POST /api/recommend</td></tr>
       </table>
     </div>`;
+}
+
+/**
+ * 渲染看板图表
+ * 获取每日数据并渲染趋势图和饼图
+ */
+async function renderDashboardCharts() {
+  try {
+    const data = await safeFetch(API + "/dashboard/daily");
+
+    // 渲染趋势折线图
+    if (data.daily_stats && data.daily_stats.length > 0) {
+      const labels = data.daily_stats.map(d => d.date);
+      const translationsData = data.daily_stats.map(d => d.translations || 0);
+      const auditsData = data.daily_stats.map(d => d.audits || 0);
+      const visionData = data.daily_stats.map(d => d.vision_analyses || 0);
+
+      Charts.line('trend-chart', labels, [
+        { label: '翻译量', data: translationsData, color: '#3b82f6' },
+        { label: '审核量', data: auditsData, color: '#22c55e' },
+        { label: '视觉识别', data: visionData, color: '#eab308' }
+      ]);
+    } else {
+      // 无数据时显示空图表
+      Charts.line('trend-chart', ['无数据'], [{ label: '暂无数据', data: [0] }]);
+    }
+
+    // 渲染占比饼图
+    if (data.usage_summary) {
+      const usageLabels = ['翻译', '审核', '视觉识别', '知识库查询'];
+      const usageData = [
+        data.usage_summary.translations || 0,
+        data.usage_summary.audits || 0,
+        data.usage_summary.vision_analyses || 0,
+        data.usage_summary.knowledge_queries || 0
+      ];
+
+      Charts.pie('usage-chart', usageLabels, usageData);
+    } else {
+      // 无数据时显示空图表
+      Charts.pie('usage-chart', ['暂无数据'], [1]);
+    }
+  } catch(e) {
+    console.error("加载图表数据失败:", e);
+    // 显示错误提示
+    const trendContainer = document.getElementById('trend-chart');
+    const usageContainer = document.getElementById('usage-chart');
+    if (trendContainer) {
+      trendContainer.parentElement.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px">加载趋势数据失败</p>';
+    }
+    if (usageContainer) {
+      usageContainer.parentElement.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:40px">加载占比数据失败</p>';
+    }
+  }
 }
 
 // === 2. 智能翻译 ===
@@ -818,6 +892,28 @@ async function testRecommend() {
 // === 7. 设置 ===
 function renderSettings() {
   return `<h2 style="color:var(--accent);margin-bottom:20px">⚙️ 系统设置</h2>
+
+    <div class="panel"><h2>🤖 AI供应商配置</h2>
+      <p style="color:var(--text-muted);margin-bottom:16px">配置多个AI供应商，支持OpenAI、DeepSeek、通义千问等。每个供应商可配置独立的API端点、密钥和模型映射。</p>
+
+      <div style="display:flex;gap:20px;min-height:400px">
+        <!-- 左侧：供应商列表 -->
+        <div style="flex:0 0 280px;border-right:1px solid var(--border);padding-right:20px">
+          <div style="margin-bottom:12px">
+            <button class="btn btn-primary" onclick="addProvider()" style="width:100%">+ 添加供应商</button>
+          </div>
+          <div id="provider-list" style="display:flex;flex-direction:column;gap:8px">
+            <p style="color:var(--text-muted);text-align:center;padding:20px">加载中...</p>
+          </div>
+        </div>
+
+        <!-- 右侧：配置详情 -->
+        <div style="flex:1" id="provider-detail">
+          <p style="color:var(--text-muted);text-align:center;padding:40px">请选择或添加供应商</p>
+        </div>
+      </div>
+    </div>
+
     <div class="panel"><h2>👥 用户管理</h2>
       <div id="user-list"></div>
       <div class="form-row" style="margin-top:12px">
@@ -830,6 +926,291 @@ function renderSettings() {
     <div class="panel"><h2>ℹ️ 系统信息</h2>
       <p>版本：1.0.0 | Python Flask + SQLite | 默认账户：admin（请联系管理员获取初始密码）</p>
     </div>`;
+}
+
+// === AI供应商管理 ===
+
+/**
+ * 加载供应商列表
+ */
+async function loadProviders() {
+  try {
+    const data = await safeFetch(API + "/ai/providers");
+    const listEl = document.getElementById("provider-list");
+
+    if (!data.providers || data.providers.length === 0) {
+      listEl.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:20px">暂无供应商</p>';
+      return;
+    }
+
+    listEl.innerHTML = data.providers.map(p => `
+      <div class="provider-item ${p.is_active ? 'active' : ''}"
+           onclick="selectProvider(${escapeHtml(p.id)})"
+           style="padding:12px;border:1px solid var(--border);border-radius:6px;cursor:pointer;transition:all 0.2s;${p.is_active ? 'border-color:var(--accent);background:var(--input-bg);' : ''}">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <b style="font-size:14px">${escapeHtml(p.name)}</b>
+            ${p.is_active ? '<span class="badge badge-pass" style="margin-left:6px">激活</span>' : ''}
+          </div>
+          <span style="color:var(--text-muted);font-size:12px">${escapeHtml(p.provider_type)}</span>
+        </div>
+        <div style="color:var(--text-muted);font-size:12px;margin-top:4px">${escapeHtml(p.base_url || '默认端点')}</div>
+      </div>
+    `).join("");
+
+    // 自动选择第一个激活的供应商
+    const activeProvider = data.providers.find(p => p.is_active);
+    if (activeProvider) {
+      selectProvider(activeProvider.id);
+    }
+  } catch(e) {
+    toast("加载供应商失败: " + e.message, "error");
+    document.getElementById("provider-list").innerHTML =
+      '<p style="color:var(--danger);text-align:center;padding:20px">加载失败</p>';
+  }
+}
+
+/**
+ * 添加新供应商
+ */
+async function addProvider() {
+  const name = prompt("请输入供应商名称（如：OpenAI-主账号）");
+  if (!name || !name.trim()) return;
+
+  const providerType = prompt("请输入供应商类型（openai/deepseek/qwen/custom）", "openai");
+  if (!providerType) return;
+
+  const validTypes = ["openai", "deepseek", "qwen", "custom"];
+  if (!validTypes.includes(providerType)) {
+    return toast("供应商类型必须是: " + validTypes.join(", "), "error");
+  }
+
+  try {
+    const data = await safeFetch(API + "/ai/providers", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        name: name.trim(),
+        provider_type: providerType
+      })
+    });
+    toast("供应商创建成功", "success");
+    await loadProviders();
+    selectProvider(data.id);
+  } catch(e) {
+    toast("创建失败: " + e.message, "error");
+  }
+}
+
+/**
+ * 选择供应商并显示详情
+ */
+async function selectProvider(providerId) {
+  try {
+    const data = await safeFetch(API + "/ai/providers");
+    const provider = data.providers.find(p => p.id === providerId);
+
+    if (!provider) {
+      return toast("供应商未找到", "error");
+    }
+
+    // 更新列表选中状态
+    document.querySelectorAll(".provider-item").forEach(el => {
+      el.style.borderColor = "var(--border)";
+      el.style.background = "transparent";
+    });
+    event.currentTarget.style.borderColor = "var(--accent)";
+    event.currentTarget.style.background = "var(--input-bg)";
+
+    // 渲染详情
+    renderProviderDetail(provider);
+  } catch(e) {
+    toast("加载供应商详情失败: " + e.message, "error");
+  }
+}
+
+/**
+ * 渲染供应商配置详情
+ */
+function renderProviderDetail(provider) {
+  const detailEl = document.getElementById("provider-detail");
+
+  // 解析模型映射
+  let modelMapping = {translate: "", compliance: "", vision: "", knowledge: ""};
+  try {
+    if (provider.model_mapping) {
+      modelMapping = typeof provider.model_mapping === "string"
+        ? JSON.parse(provider.model_mapping)
+        : provider.model_mapping;
+    }
+  } catch(e) {
+    console.error("解析模型映射失败:", e);
+  }
+
+  detailEl.innerHTML = `
+    <div style="padding:20px;border:1px solid var(--border);border-radius:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <h3 style="margin:0">${escapeHtml(provider.name)}</h3>
+        <div>
+          ${provider.is_active
+            ? '<span class="badge badge-pass">已激活</span>'
+            : '<button class="btn btn-success btn-sm" onclick="activateProvider(' + provider.id + ')">激活</button>'}
+          <button class="btn btn-outline btn-sm" onclick="testProvider(${provider.id})" style="margin-left:8px">测试连接</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteProvider(${provider.id})" style="margin-left:8px" ${provider.is_active ? 'disabled' : ''}>删除</button>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label style="min-width:120px">供应商类型</label>
+        <input value="${escapeHtml(provider.provider_type)}" disabled style="flex:1;background:var(--input-bg)">
+      </div>
+
+      <div class="form-row">
+        <label style="min-width:120px">API端点</label>
+        <input id="provider-url-${provider.id}" value="${escapeHtml(provider.base_url || '')}"
+               placeholder="留空使用默认端点" style="flex:1">
+      </div>
+
+      <div class="form-row">
+        <label style="min-width:120px">API密钥</label>
+        <input id="provider-key-${provider.id}" type="password"
+               value="${escapeHtml(provider.api_key || '')}"
+               placeholder="sk-xxxxxxxx" style="flex:1">
+        <span style="color:var(--text-muted);margin-left:8px;font-size:12px">
+          ${provider.api_key ? '✓ 已设置' : '未设置'}
+        </span>
+      </div>
+
+      <h4 style="margin-top:24px;margin-bottom:12px;color:var(--accent)">🎯 模型映射（4层）</h4>
+      <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px">
+        为不同功能模块指定专用模型，留空则使用供应商默认模型
+      </p>
+
+      <div class="form-row">
+        <label style="min-width:120px">🌐 翻译模型</label>
+        <input id="model-translate-${provider.id}" value="${escapeHtml(modelMapping.translate || '')}"
+               placeholder="如：gpt-4o-mini" style="flex:1">
+      </div>
+
+      <div class="form-row">
+        <label style="min-width:120px">🛡️ 合规模型</label>
+        <input id="model-compliance-${provider.id}" value="${escapeHtml(modelMapping.compliance || '')}"
+               placeholder="如：deepseek-chat" style="flex:1">
+      </div>
+
+      <div class="form-row">
+        <label style="min-width:120px">👁️ 视觉模型</label>
+        <input id="model-vision-${provider.id}" value="${escapeHtml(modelMapping.vision || '')}"
+               placeholder="如：gpt-4o" style="flex:1">
+      </div>
+
+      <div class="form-row">
+        <label style="min-width:120px">📚 知识库模型</label>
+        <input id="model-knowledge-${provider.id}" value="${escapeHtml(modelMapping.knowledge || '')}"
+               placeholder="如：qwen-turbo" style="flex:1">
+      </div>
+
+      <div style="margin-top:20px">
+        <button class="btn btn-success" onclick="saveProvider(${provider.id})">💾 保存配置</button>
+        <span id="provider-status-${provider.id}" style="margin-left:12px"></span>
+      </div>
+    </div>`;
+}
+
+/**
+ * 保存供应商配置
+ */
+async function saveProvider(providerId) {
+  const data = {
+    base_url: document.getElementById(`provider-url-${providerId}`).value.trim() || null,
+    api_key: document.getElementById(`provider-key-${providerId}`).value.trim() || null,
+    model_mapping: {
+      translate: document.getElementById(`model-translate-${providerId}`).value.trim() || null,
+      compliance: document.getElementById(`model-compliance-${providerId}`).value.trim() || null,
+      vision: document.getElementById(`model-vision-${providerId}`).value.trim() || null,
+      knowledge: document.getElementById(`model-knowledge-${providerId}`).value.trim() || null
+    }
+  };
+
+  const btn = document.querySelector(`button[onclick="saveProvider(${providerId})"]`);
+  setButtonLoading(btn, true, "保存中...");
+
+  try {
+    await safeFetch(API + "/ai/providers/" + providerId, {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(data)
+    });
+    toast("配置已保存", "success");
+    document.getElementById(`provider-status-${providerId}`).innerHTML =
+      '<span style="color:var(--success)">✓ 已保存</span>';
+    await loadProviders();
+  } catch(e) {
+    toast("保存失败: " + e.message, "error");
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+/**
+ * 测试供应商连接
+ */
+async function testProvider(providerId) {
+  const statusEl = document.getElementById(`provider-status-${providerId}`);
+  statusEl.innerHTML = '<span style="color:var(--text-muted)">测试中...</span>';
+
+  try {
+    const result = await safeFetch(API + "/ai/providers/" + providerId + "/test", {
+      method: "POST"
+    });
+
+    if (result.success) {
+      statusEl.innerHTML = '<span style="color:var(--success)">✓ ' + escapeHtml(result.message) + '</span>';
+      toast("连接成功", "success");
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--danger)">✗ ' + escapeHtml(result.message) + '</span>';
+      toast(result.message, "error");
+    }
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:var(--danger)">✗ 连接失败</span>';
+    toast("测试失败: " + e.message, "error");
+  }
+}
+
+/**
+ * 激活供应商
+ */
+async function activateProvider(providerId) {
+  if (!confirm("确认激活此供应商？激活后将切换到该供应商的配置。")) return;
+
+  try {
+    await safeFetch(API + "/ai/providers/" + providerId + "/activate", {
+      method: "POST"
+    });
+    toast("供应商已激活", "success");
+    await loadProviders();
+  } catch(e) {
+    toast("激活失败: " + e.message, "error");
+  }
+}
+
+/**
+ * 删除供应商
+ */
+async function deleteProvider(providerId) {
+  if (!confirm("确认删除此供应商？此操作不可恢复。")) return;
+
+  try {
+    await safeFetch(API + "/ai/providers/" + providerId, {
+      method: "DELETE"
+    });
+    toast("供应商已删除", "success");
+    await loadProviders();
+    document.getElementById("provider-detail").innerHTML =
+      '<p style="color:var(--text-muted);text-align:center;padding:40px">请选择或添加供应商</p>';
+  } catch(e) {
+    toast("删除失败: " + e.message, "error");
+  }
 }
 async function loadUsers() {
   try {
