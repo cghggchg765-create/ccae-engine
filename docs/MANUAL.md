@@ -11,7 +11,8 @@ CCAE（Cross-Cultural Adaptation Engine）跨文化适配引擎，为汉服TikTo
 5. **知识库** — 形制/纹样/工艺/礼仪多语知识库
 6. **文案生成** — 适配区域文化的短视频文案
 7. **个性化推荐** — 基于用户画像+视觉标签的内容推荐
-8. **数据看板** — 全模块运营数据
+8. **数据看板** — 全模块运营数据 + 可视化图表
+9. **AI供应商管理** — 多供应商统一管理，一键切换
 
 ---
 
@@ -27,13 +28,13 @@ CCAE（Cross-Cultural Adaptation Engine）跨文化适配引擎，为汉服TikTo
 ```bash
 # 1. 安装依赖
 cd ccae-engine
-pip install flask flask-cors openpyxl pillow
+pip install -r requirements.txt
 
 # 2. 初始化数据库
 python backend/database.py
 
 # 3. 启动服务
-python backend/app.py
+python run.py
 ```
 
 服务默认运行在 `http://127.0.0.1:5000`
@@ -86,11 +87,38 @@ python backend/app.py
 
 ### 5. 数据看板
 
-首页展示全模块关键指标：语料库数、规则数、30天翻译量、准确率、审核通过率等。
+首页展示：
+- 关键指标：语料库数、规则数、30天翻译量、准确率、审核通过率等
+- **趋势图表**：近7天翻译/审核/视觉识别量折线图
+- **模块占比**：各API使用占比饼图
 
-### 6. 系统设置
+### 6. AI 供应商管理（v1.1.0 新增）
 
-- 「⚙️ 系统设置」→ 用户管理，可添加/删除操作员、审核员、只读用户
+点击「⚙️ 系统设置」，进入 AI 供应商配置：
+
+**供应商列表**（左侧）：
+- 显示已配置的供应商（OpenAI、DeepSeek、通义千问等）
+- 绿色标记当前激活的供应商
+- 点击「+ 添加供应商」新增
+
+**配置详情**（右侧）：
+- **API 端点**：供应商 API 地址
+- **API 密钥**：输入密钥（显示为 ****）
+- **4层模型映射**：
+  - Primary（主模型）：日常使用
+  - Light（轻量模型）：快速响应
+  - Balanced（均衡模型）：质量优先
+  - Strongest（最强模型）：复杂推理
+
+**操作按钮**：
+- 「保存」：保存配置到本地文件
+- 「测试连接」：验证 API 是否可用
+- 「设为当前」：激活该供应商
+- 「删除」：删除供应商
+
+### 7. 系统设置
+
+- 用户管理：添加/删除操作员、审核员、只读用户
 
 ---
 
@@ -114,6 +142,10 @@ r = requests.post("http://127.0.0.1:5000/api/compliance/audit/text", json={
     "country": "沙特阿拉伯"
 })
 print(r.json())
+
+# AI 供应商管理
+r = requests.get("http://127.0.0.1:5000/api/ai/providers")
+print(r.json())
 ```
 
 ### JavaScript
@@ -125,6 +157,9 @@ fetch("/api/translate", {
   headers: {"Content-Type": "application/json"},
   body: JSON.stringify({text: "马面裙", target_lang: "en"})
 }).then(r => r.json()).then(console.log)
+
+// AI 供应商列表
+fetch("/api/ai/providers").then(r => r.json()).then(console.log)
 ```
 
 ---
@@ -163,23 +198,47 @@ ccae-engine/
 │   │   ├── compliance.py     # 合规API
 │   │   ├── vision.py         # 视觉API
 │   │   ├── knowledge.py      # 知识库API
-│   │   └── dashboard.py      # 看板+权限API
+│   │   ├── dashboard.py      # 看板+权限API
+│   │   └── ai_providers.py  # AI供应商管理API
 │   └── services/             # 业务逻辑层
 │       ├── translator.py     # 翻译引擎
 │       ├── compliance_checker.py  # 合规引擎
 │       ├── vision_analyzer.py     # 视觉识别
+│       ├── provider_config.py     # AI供应商配置
 │       └── recommender.py    # 推荐+知识库
 ├── frontend/                 # Web管理后台
 │   ├── index.html
 │   ├── css/style.css
-│   └── js/app.js
+│   └── js/
+│       ├── app.js            # 主应用逻辑
+│       └── charts.js         # 图表封装
 ├── data/
 │   ├── ccae.db               # SQLite数据库
-│   ├── corpus/               # 语料库数据（备用）
-│   ├── rules/                # 规则库数据（备用）
-│   └── knowledge/            # 知识库数据（备用）
+│   └── .ccae/
+│       └── config.json       # AI供应商配置
 └── docs/
     ├── API.md                # API文档
     ├── MANUAL.md             # 操作手册（本文件）
     └── DEPLOY.md             # 部署说明
 ```
+
+---
+
+## 配置文件说明
+
+### .env 环境变量
+
+```bash
+CCAE_SECRET_KEY=your-secret-key
+AI_PROVIDER=openai          # 当前AI供应商（可选）
+AI_API_KEY=sk-xxxx         # API密钥（可选）
+AI_BASE_URL=https://...    # API端点（可选）
+AI_MODEL=gpt-4o-mini        # 模型名称（可选）
+```
+
+### data/.ccae/config.json
+
+AI供应商配置存储，包含：
+- 供应商列表（id, name, provider_type）
+- 端点配置（base_url, api_key, model_mapping）
+- 激活状态（is_active）
