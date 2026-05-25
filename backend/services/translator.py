@@ -3,7 +3,7 @@
 import json
 import time
 from database import get_db
-from ai_service import get_ai_service
+from services.ai_service import get_ai_service
 
 
 class TranslatorService:

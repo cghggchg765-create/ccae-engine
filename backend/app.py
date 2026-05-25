@@ -19,12 +19,14 @@ from api.compliance import compliance_bp
 from api.vision import vision_bp
 from api.knowledge import knowledge_bp
 from api.dashboard import dashboard_bp
+from api.ai_providers import providers_bp
 
 app.register_blueprint(translate_bp)
 app.register_blueprint(compliance_bp)
 app.register_blueprint(vision_bp)
 app.register_blueprint(knowledge_bp)
 app.register_blueprint(dashboard_bp)
+app.register_blueprint(providers_bp)
 
 
 @app.route("/")
@@ -41,7 +43,7 @@ def api_info():
             "name": "CCAE跨文化适配引擎",
             "version": "1.0.0",
             "priority_p0": ["翻译API", "合规审核API"],
-            "priority_p1": ["视觉识别API", "知识库API"],
+            "priority_p1": ["视觉识别API", "知识库API", "AI供应商管理API"],
             "priority_p2": ["推荐API", "数据看板API", "权限管理API"],
             "endpoints": {
                 "翻译": ["POST /api/translate", "GET/POST /api/corpus"],
@@ -57,6 +59,16 @@ def api_info():
                 "知识库": [
                     "GET/POST /api/knowledge",
                     "POST /api/knowledge/generate-copy",
+                ],
+                "AI供应商": [
+                    "GET /api/ai/providers",
+                    "POST /api/ai/providers",
+                    "GET /api/ai/providers/<id>",
+                    "PUT /api/ai/providers/<id>",
+                    "DELETE /api/ai/providers/<id>",
+                    "POST /api/ai/providers/<id>/activate",
+                    "POST /api/ai/providers/<id>/test",
+                    "GET /api/ai/current",
                 ],
                 "推荐": ["POST /api/recommend"],
                 "看板": ["GET /api/dashboard/overview"],

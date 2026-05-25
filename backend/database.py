@@ -223,10 +223,11 @@ def init_db():
     conn.commit()
     conn.close()
     print("[OK] Database initialized:", DB_PATH)
-    print(f"[!] 默认管理员账户: admin")
-    print(f"[!] 默认密码: {default_password}")
-    print(f"[!] 哈希方法: {hash_method}")
-    print("[!] ⚠️  请立即登录并修改默认密码！生产环境请删除此账户！")
+    print(f"[!] Default admin account: admin")
+    print(f"[!] Default password: {default_password}")
+    print(f"[!] Hash method: {hash_method}")
+    print("[!] WARNING: Please login and change the default password immediately!")
+    print("[!] WARNING: Delete this account in production environment!")
 
 
 if __name__ == "__main__":

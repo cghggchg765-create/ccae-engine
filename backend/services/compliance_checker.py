@@ -6,7 +6,7 @@ import hashlib
 import os
 from PIL import Image
 from database import get_db
-from ai_service import get_ai_service
+from services.ai_service import get_ai_service
 
 # ---- 高危色彩模式映射 ----
 # 基于色彩分布的组合来推断可能的敏感符号
@@ -50,6 +50,12 @@ class ComplianceChecker:
 
     CATEGORIES = ["文化冒犯", "宗教禁忌", "政治敏感", "文化挪用"]
     RISK_LEVELS = ["合规", "低风险", "高风险"]
+
+    # 项目数据目录基准路径
+    PROJECT_DATA_DIR = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data"
+    )
 
     def __init__(self):
         self.target_accuracy = {"text": 0.98, "image": 0.95}
@@ -288,11 +294,7 @@ class ComplianceChecker:
             "analysis_method": "color_profile" if color_profile else "filename",
         }
 
-# ========== 图像分析辅助方法 ==========
-
-    # 项目数据目录基准路径
-    PROJECT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), "data")
+    # ========== 图像分析辅助方法 ==========
 
     def _validate_path(self, path: str) -> str:
         """
@@ -527,7 +529,7 @@ class ComplianceChecker:
         self.db.commit()
         return {"id": cursor.lastrowid, "message": "规则添加成功"}
 
-def update_rule(self, rule_id: int, **kwargs):
+    def update_rule(self, rule_id: int, **kwargs):
         allowed = ["country", "region", "category", "keywords", "pattern",
                    "risk_level", "reason", "suggestion", "status"]
         updates = {}
@@ -555,7 +557,7 @@ def update_rule(self, rule_id: int, **kwargs):
         db.commit()
         return {"message": "规则已删除"}
 
-def get_audit_logs(self, page=1, per_page=50, risk_level=None):
+    def get_audit_logs(self, page=1, per_page=50, risk_level=None):
         """获取审核日志 - 使用安全的参数化查询"""
         db = self._get_db()
         cursor = db.cursor()
@@ -578,7 +580,7 @@ def get_audit_logs(self, page=1, per_page=50, risk_level=None):
         items = [dict(row) for row in cursor.fetchall()]
         return {"total": total, "page": page, "items": items}
 
-def get_stats(self):
+    def get_stats(self):
         db = self._get_db()
         cursor = db.cursor()
         cursor.execute(
