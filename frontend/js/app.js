@@ -121,6 +121,20 @@ function escapeHtml(str) {
     .replace(/\//g, "&#x2F;"); // 防止闭合标签攻击
 }
 
+/**
+ * 防抖函数 - 延迟执行函数，避免频繁调用
+ * @param {Function} func - 待防抖的函数
+ * @param {number} wait - 延迟时间（毫秒），默认300ms
+ * @returns {Function} - 防抖后的函数
+ */
+function debounce(func, wait = 300) {
+  let timeout;
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+}
+
 // === 导航 ===
 document.querySelectorAll("#nav-menu li[data-page]").forEach(el => {
   el.onclick = () => {
@@ -273,7 +287,7 @@ function renderTranslate() {
     
     <div class="panel"><h2>📖 语料库管理 (共<span id="corpus-total">0</span>条)</h2>
       <div class="form-row">
-        <input id="corpus-search" placeholder="搜索术语..." oninput="loadCorpus()">
+        <input id="corpus-search" placeholder="搜索术语..." oninput="debounce(loadCorpus)()">
         <select id="corpus-cat" onchange="loadCorpus()">
           <option value="">全部分类</option>
           ${CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join("")}
