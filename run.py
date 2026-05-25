@@ -14,6 +14,12 @@ GitHub: https://github.com/2187262974-cmd/ccae-engine
 import argparse
 import os
 import sys
+import io
+
+# 修复Windows终端中文输出乱码
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Ensure backend/ is on the Python path
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +53,9 @@ examples:
 
 
 def main():
+    from dotenv import load_dotenv
+    load_dotenv()
+
     args = parse_args()
 
     # Late import: let sys.path resolve backend modules
