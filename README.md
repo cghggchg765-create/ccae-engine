@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Cross-Cultural Adaptation Engine</strong><br>
-  <em>为「华裳出海 — 汉服TikTok全球运营」打造的核心引擎</em>
+  <em>跨文化适配引擎 — 汉服出海核心引擎</em>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ## 项目简介
 
-CCAE 解决汉服出海的三大核心痛点：
+CCAE（Cross-Cultural Adaptation Engine，跨文化适配引擎）解决汉服出海的三大核心痛点：
 
 | 痛点 | 解决方案 | 效果 |
 |------|----------|------|

@@ -1,8 +1,8 @@
-# CCAE跨文化适配引擎 API 文档 v1.1.0
+# CCAE 跨文化适配引擎 API 文档 v1.1.0
 
 ## 概述
 
-CCAE（Cross-Cultural Adaptation Engine）为华裳出海项目核心引擎，提供汉服专业翻译、文化禁忌合规审核、视觉识别、审美匹配、知识库、个性化推荐等全栈API服务。
+CCAE（Cross-Cultural Adaptation Engine，跨文化适配引擎）为汉服出海项目提供汉服专业翻译、文化禁忌合规审核、视觉识别、审美匹配、知识库、个性化推荐等全栈API服务。
 
 - **Base URL**: `http://127.0.0.1:5000`
 - **数据格式**: JSON（请求/响应）

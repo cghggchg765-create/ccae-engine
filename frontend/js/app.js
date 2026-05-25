@@ -1,4 +1,4 @@
-/* CCAE管理后台主逻辑 */
+/* CCAE 跨文化适配引擎 (Cross-Cultural Adaptation Engine) - 管理后台 */
 
 const API = "/api";
 const LANGUAGES = {en:"英语", ja:"日语", ko:"韩语", es:"西班牙语", fr:"法语", ar:"阿拉伯语"};

@@ -1,4 +1,4 @@
-"""CCAE跨文化适配引擎 - 主应用入口"""
+"""CCAE 跨文化适配引擎 (Cross-Cultural Adaptation Engine) - 主应用入口"""
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
@@ -40,7 +40,7 @@ def api_info():
     """API信息"""
     return jsonify(
         {
-            "name": "CCAE跨文化适配引擎",
+            "name": "CCAE 跨文化适配引擎 (Cross-Cultural Adaptation Engine)",
             "version": "1.0.0",
             "priority_p0": ["翻译API", "合规审核API"],
             "priority_p1": ["视觉识别API", "知识库API", "AI供应商管理API"],

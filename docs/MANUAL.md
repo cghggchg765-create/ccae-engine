@@ -1,8 +1,8 @@
-# CCAE引擎 操作手册
+# CCAE 跨文化适配引擎 操作手册
 
 ## 系统概述
 
-CCAE（Cross-Cultural Adaptation Engine）跨文化适配引擎，为汉服TikTok全球运营提供：
+CCAE（Cross-Cultural Adaptation Engine，跨文化适配引擎）为汉服 TikTok 全球运营提供：
 
 1. **智能翻译** — 5000+汉服专业术语库，中→英/日/韩/西/法/阿，自动附加文化注释
 2. **合规审核** — 150+国家文化禁忌规则库，文本/图片双渠道审核
