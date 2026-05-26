@@ -41,7 +41,7 @@ def api_info():
     return jsonify(
         {
             "name": "CCAE 跨文化适配引擎 (Cross-Cultural Adaptation Engine)",
-            "version": "1.0.0",
+            "version": "1.2.0",
             "priority_p0": ["翻译API", "合规审核API"],
             "priority_p1": ["视觉识别API", "知识库API", "AI供应商管理API"],
             "priority_p2": ["推荐API", "数据看板API", "权限管理API"],

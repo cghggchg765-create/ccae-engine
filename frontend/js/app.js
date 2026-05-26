@@ -869,7 +869,7 @@ function renderSettings() {
       "</div>" +
     "</div>" +
     "<div class=\"panel\"><h2>系统信息</h2>" +
-      "<p>版本：1.0.0 | Python Flask + SQLite | 默认账户：admin（请联系管理员获取初始密码）</p>" +
+      "<p>版本：v1.2.0 | Python Flask + SQLite | CHANGELOG.md 查看更新记录</p>" +
     "</div>";
 }
 
