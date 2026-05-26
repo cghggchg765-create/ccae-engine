@@ -431,6 +431,10 @@ class ProviderManager:
     def add_provider(self, provider_data: Dict[str, Any]) -> Dict[str, Any]:
         """添加供应商
 
+        支持两种模式：
+        1. 从预设创建：只传 provider_type，自动使用预设配置
+        2. 自定义创建：传完整数据（id, name, provider_type, endpoints）
+
         Args:
             provider_data: 供应商数据
 
@@ -440,7 +444,31 @@ class ProviderManager:
         Raises:
             ValueError: 数据验证失败
         """
-        # 验证必要字段
+        provider_type = provider_data.get("provider_type")
+
+        # 模式1：从预设创建
+        if provider_type and not provider_data.get("id"):
+            preset = None
+            for p in PRESET_PROVIDERS:
+                if p["provider_type"] == provider_type:
+                    preset = p.copy()
+                    break
+
+            if not preset:
+                raise ValueError(f"不支持的供应商类型: {provider_type}")
+
+            # 检查是否已存在
+            if preset["id"] in self._providers:
+                raise ValueError(f"供应商 '{preset['id']}' 已存在")
+
+            provider = ProviderConfig.from_dict(preset)
+            self._providers[provider.id] = provider
+            self._save_config()
+
+            logger.info(f"[ProviderManager] 已从预设添加供应商: {provider.name}")
+            return provider.to_dict()
+
+        # 模式2：自定义创建
         if not provider_data.get("id"):
             raise ValueError("供应商ID不能为空")
         if not provider_data.get("name"):
